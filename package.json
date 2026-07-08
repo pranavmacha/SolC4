@@ -1,0 +1,24 @@
+{
+  "name": "stadiumpulse-26",
+  "version": "1.0.0",
+  "description": "GenAI-enabled stadium operations and fan experience dashboard for FIFA World Cup 2026 match days.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check public/app.js && node --check tests/server.test.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "genai",
+    "stadium-operations",
+    "world-cup",
+    "accessibility",
+    "crowd-management"
+  ],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}

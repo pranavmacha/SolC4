@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>StadiumPulse 26</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">FIFA World Cup 2026 matchday command</p>
+        <h1>StadiumPulse 26</h1>
+      </div>
+      <div class="topbar-actions">
+        <span class="live-dot" aria-hidden="true"></span>
+        <span id="lastUpdated">Live venue snapshot</span>
+      </div>
+    </header>
+
+    <section id="accessGate" class="access-gate hidden" aria-live="polite">
+      <form id="accessForm" class="access-card">
+        <p class="eyebrow">Protected operations console</p>
+        <h2>Enter Access Code</h2>
+        <p>AI operations features require an authorized stadium access code.</p>
+        <label for="accessToken">Access code</label>
+        <input id="accessToken" type="password" autocomplete="current-password" placeholder="Enter access code">
+        <button type="submit">Unlock StadiumPulse</button>
+        <p id="accessError" class="access-error" role="alert"></p>
+      </form>
+    </section>
+
+    <main class="app-shell">
+      <aside class="control-panel" aria-label="Scenario controls">
+        <section class="panel">
+          <div class="section-title">
+            <h2>Match Context</h2>
+            <span id="matchClock" class="pill">T-02:15</span>
+          </div>
+
+          <label for="scenarioSelect">Scenario</label>
+          <select id="scenarioSelect"></select>
+
+          <label for="personaSelect">Audience</label>
+          <select id="personaSelect">
+            <option>Fan</option>
+            <option>Organizer</option>
+            <option>Volunteer</option>
+            <option>Venue staff</option>
+          </select>
+
+          <label for="languageSelect">Language</label>
+          <select id="languageSelect">
+            <option>English</option>
+            <option>Spanish</option>
+            <option>French</option>
+            <option>Portuguese</option>
+            <option>Arabic</option>
+            <option>Hindi</option>
+            <option>Plain-language captions</option>
+          </select>
+        </section>
+
+        <section class="panel custom-scenario-panel">
+          <div class="section-title">
+            <h2>Custom Scenario</h2>
+            <span class="pill">Operator-created</span>
+          </div>
+          <form id="scenarioForm" class="scenario-form">
+            <label for="customLabel">Name</label>
+            <input id="customLabel" type="text" maxlength="80" placeholder="North gate surge">
+
+            <label for="customClock">Match clock</label>
+            <input id="customClock" type="text" maxlength="40" placeholder="T-00:45">
+
+            <label for="customWeather">Weather</label>
+            <textarea id="customWeather" rows="2" placeholder="Hot, humid, lightning watch in 25 minutes"></textarea>
+
+            <label for="customTransit">Transit</label>
+            <textarea id="customTransit" rows="2" placeholder="Metro at 82% load, shuttle bays 5 open"></textarea>
+
+            <label for="customZones">Zones JSON</label>
+            <textarea id="customZones" rows="8"></textarea>
+
+            <label for="customIncidents">Incidents JSON</label>
+            <textarea id="customIncidents" rows="5"></textarea>
+
+            <button type="submit">Create Scenario</button>
+            <p id="scenarioMessage" class="form-message" role="status"></p>
+          </form>
+        </section>
+
+        <section class="panel">
+          <div class="section-title">
+            <h2>Accessibility</h2>
+            <span class="pill">Route-aware</span>
+          </div>
+
+          <label class="check-row">
+            <input id="stepFree" type="checkbox" checked>
+            <span>Step-free routing</span>
+          </label>
+          <label class="check-row">
+            <input id="lowSensory" type="checkbox">
+            <span>Low-sensory path</span>
+          </label>
+          <label class="check-row">
+            <input id="audioDescription" type="checkbox">
+            <span>Audio description</span>
+          </label>
+        </section>
+
+        <section class="panel">
+          <div class="section-title">
+            <h2>Transport</h2>
+            <span id="transitLoad" class="pill">87%</span>
+          </div>
+          <p id="transportSignal" class="signal-text"></p>
+          <div class="metric-line">
+            <span>Shuttle bays</span>
+            <strong id="shuttleBays">6 open</strong>
+          </div>
+          <div class="metric-line">
+            <span>Bike valet</span>
+            <strong id="bikeValet">42% free</strong>
+          </div>
+        </section>
+      </aside>
+
+      <section class="command-center" aria-label="Operations dashboard">
+        <div class="metric-grid" aria-label="Live metrics">
+          <article class="metric-tile">
+            <span>Peak density</span>
+            <strong id="peakDensity">0%</strong>
+          </article>
+          <article class="metric-tile">
+            <span>Avg gate wait</span>
+            <strong id="avgWait">0 min</strong>
+          </article>
+          <article class="metric-tile">
+            <span>Open incidents</span>
+            <strong id="incidentCount">0</strong>
+          </article>
+          <article class="metric-tile">
+            <span>Waste diversion</span>
+            <strong id="wasteDiversion">0%</strong>
+          </article>
+        </div>
+
+        <section class="map-panel">
+          <div class="section-title">
+            <div>
+              <h2>AI Crowd Map</h2>
+              <p id="weatherSignal" class="muted"></p>
+            </div>
+            <button id="briefingButton" type="button">Generate AI briefing</button>
+          </div>
+
+          <div id="stadiumMap" class="stadium-map" role="group" aria-label="Interactive stadium crowd map"></div>
+
+          <div class="legend" aria-label="Crowd density legend">
+            <span><i class="legend-dot low"></i>Low</span>
+            <span><i class="legend-dot medium"></i>Medium</span>
+            <span><i class="legend-dot high"></i>High</span>
+            <span><i class="legend-dot critical"></i>Critical</span>
+          </div>
+        </section>
+
+        <section class="split-row">
+          <article class="panel zone-detail">
+            <div class="section-title">
+              <h2 id="selectedZoneName">Selected Zone</h2>
+              <span id="selectedZoneRisk" class="pill">Stable</span>
+            </div>
+            <dl>
+              <div>
+                <dt>Density</dt>
+                <dd id="selectedZoneDensity">0%</dd>
+              </div>
+              <div>
+                <dt>Wait</dt>
+                <dd id="selectedZoneWait">0 min</dd>
+              </div>
+              <div>
+                <dt>Accessible path</dt>
+                <dd id="selectedZoneAccess">Ask nearest volunteer</dd>
+              </div>
+            </dl>
+          </article>
+
+          <article class="panel">
+            <div class="section-title">
+              <h2>Incident Queue</h2>
+              <span id="incidentRisk" class="pill">Open</span>
+            </div>
+            <div id="incidentList" class="incident-list"></div>
+          </article>
+        </section>
+      </section>
+
+      <aside class="ai-panel" aria-label="Generative AI copilot">
+        <section class="panel ai-briefing">
+          <div class="section-title">
+            <h2>Ops Intelligence</h2>
+            <span id="briefingSource" class="pill">Demo AI</span>
+          </div>
+          <h3 id="briefingHeadline">Generate a live briefing</h3>
+          <p id="briefingSummary" class="signal-text">Crowd, transport, accessibility, and sustainability guidance will appear here.</p>
+          <ul id="briefingPriorities" class="action-list"></ul>
+        </section>
+
+        <section class="panel assistant-card">
+          <div class="section-title">
+            <h2>Multilingual Copilot</h2>
+            <span id="assistantSource" class="pill">Ready</span>
+          </div>
+
+          <div class="prompt-chips" aria-label="Suggested prompts">
+            <button type="button" data-prompt="Find the safest step-free route to my seat.">Step-free route</button>
+            <button type="button" data-prompt="What should volunteers say near the busiest gate?">Volunteer script</button>
+            <button type="button" data-prompt="How should we move fans to transit after full time?">Post-match transit</button>
+          </div>
+
+          <form id="assistantForm" class="assistant-form">
+            <label for="assistantInput">Ask the AI copilot</label>
+            <textarea id="assistantInput" rows="3" placeholder="Ask about navigation, crowd flow, accessibility, transit, or operations..."></textarea>
+            <button type="submit">Ask StadiumPulse</button>
+          </form>
+
+          <div id="chatLog" class="chat-log" aria-live="polite"></div>
+        </section>
+      </aside>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>

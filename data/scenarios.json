@@ -1,0 +1,128 @@
+{
+  "arrival": {
+    "id": "arrival",
+    "label": "Pregame arrival",
+    "matchClock": "T-02:15",
+    "weather": "Hot afternoon, 31 C, hydration demand rising",
+    "transit": "Metro arrivals at 87% platform load; rideshare curb is constrained",
+    "transport": {
+      "transitLoad": "87%",
+      "shuttleBays": "6 open",
+      "bikeValet": "42% free"
+    },
+    "sustainability": {
+      "diversion": "64%",
+      "refillDemand": "High at north concourse",
+      "energyMode": "Pre-cool bowl, reduce concourse lighting 8%"
+    },
+    "zones": [
+      { "id": "north", "name": "North Gate", "type": "Entry", "x": 43, "y": 3, "w": 18, "h": 12, "density": 86, "wait": 19, "status": "rising", "accessible": "Gate N3 elevator lane" },
+      { "id": "west", "name": "West Transit", "type": "Transit", "x": 8, "y": 39, "w": 20, "h": 15, "density": 78, "wait": 14, "status": "rising", "accessible": "Ramp W2 from metro plaza" },
+      { "id": "south", "name": "South Gate", "type": "Entry", "x": 42, "y": 82, "w": 18, "h": 12, "density": 48, "wait": 7, "status": "stable", "accessible": "Gate S1 step-free lane" },
+      { "id": "east", "name": "East Ramp", "type": "Ramp", "x": 78, "y": 39, "w": 18, "h": 15, "density": 57, "wait": 8, "status": "stable", "accessible": "Ramp E4" },
+      { "id": "concourse", "name": "Concourse A", "type": "Concourse", "x": 30, "y": 26, "w": 18, "h": 12, "density": 72, "wait": 11, "status": "rising", "accessible": "Lift bank A" },
+      { "id": "accessible", "name": "Access Hub", "type": "Support", "x": 60, "y": 25, "w": 16, "h": 12, "density": 38, "wait": 4, "status": "stable", "accessible": "Access Hub lift corridor" },
+      { "id": "bowl", "name": "Lower Bowl", "type": "Seating", "x": 39, "y": 52, "w": 22, "h": 14, "density": 53, "wait": 6, "status": "stable", "accessible": "Tunnel 117 lift" },
+      { "id": "volunteers", "name": "Volunteer Check", "type": "Staff", "x": 63, "y": 68, "w": 18, "h": 12, "density": 44, "wait": 3, "status": "stable", "accessible": "Service corridor V1" }
+    ],
+    "incidents": [
+      { "id": "INC-102", "title": "Turnstile N7 language support needed", "zone": "North Gate", "severity": "high", "owner": "Volunteer lead", "eta": "4 min" },
+      { "id": "INC-116", "title": "Hydration refill queue backing up", "zone": "Concourse A", "severity": "medium", "owner": "Guest services", "eta": "7 min" },
+      { "id": "INC-121", "title": "Rideshare curb approaching cap", "zone": "West Transit", "severity": "medium", "owner": "Transport liaison", "eta": "10 min" }
+    ]
+  },
+  "halftime": {
+    "id": "halftime",
+    "label": "Halftime surge",
+    "matchClock": "HT +04",
+    "weather": "Roof shade stable, concourse temperature 27 C",
+    "transit": "Transit stable; internal concourse flow is the limiting factor",
+    "transport": {
+      "transitLoad": "52%",
+      "shuttleBays": "4 standby",
+      "bikeValet": "38% free"
+    },
+    "sustainability": {
+      "diversion": "58%",
+      "refillDemand": "Medium near east ramp",
+      "energyMode": "Kitchen demand peak"
+    },
+    "zones": [
+      { "id": "north", "name": "North Gate", "type": "Entry", "x": 43, "y": 3, "w": 18, "h": 12, "density": 41, "wait": 3, "status": "falling", "accessible": "Gate N3 elevator lane" },
+      { "id": "west", "name": "West Transit", "type": "Transit", "x": 8, "y": 39, "w": 20, "h": 15, "density": 36, "wait": 2, "status": "stable", "accessible": "Ramp W2 from metro plaza" },
+      { "id": "south", "name": "South Gate", "type": "Entry", "x": 42, "y": 82, "w": 18, "h": 12, "density": 39, "wait": 3, "status": "stable", "accessible": "Gate S1 step-free lane" },
+      { "id": "east", "name": "East Ramp", "type": "Ramp", "x": 78, "y": 39, "w": 18, "h": 15, "density": 69, "wait": 9, "status": "rising", "accessible": "Ramp E4" },
+      { "id": "concourse", "name": "Concourse A", "type": "Concourse", "x": 30, "y": 26, "w": 18, "h": 12, "density": 91, "wait": 16, "status": "rising", "accessible": "Lift bank A" },
+      { "id": "accessible", "name": "Access Hub", "type": "Support", "x": 60, "y": 25, "w": 16, "h": 12, "density": 61, "wait": 7, "status": "rising", "accessible": "Access Hub lift corridor" },
+      { "id": "bowl", "name": "Lower Bowl", "type": "Seating", "x": 39, "y": 52, "w": 22, "h": 14, "density": 44, "wait": 2, "status": "falling", "accessible": "Tunnel 117 lift" },
+      { "id": "volunteers", "name": "Volunteer Check", "type": "Staff", "x": 63, "y": 68, "w": 18, "h": 12, "density": 51, "wait": 4, "status": "stable", "accessible": "Service corridor V1" }
+    ],
+    "incidents": [
+      { "id": "INC-209", "title": "Concession queue blocks accessible lift sightline", "zone": "Concourse A", "severity": "critical", "owner": "Concourse manager", "eta": "3 min" },
+      { "id": "INC-214", "title": "Quiet room occupancy high", "zone": "Access Hub", "severity": "medium", "owner": "Accessibility lead", "eta": "6 min" }
+    ]
+  },
+  "egress": {
+    "id": "egress",
+    "label": "Post-match egress",
+    "matchClock": "FT +09",
+    "weather": "Light rain expected in 18 minutes",
+    "transit": "Metro platform at 92% load; shuttle queue forecast high",
+    "transport": {
+      "transitLoad": "92%",
+      "shuttleBays": "9 open",
+      "bikeValet": "21% free"
+    },
+    "sustainability": {
+      "diversion": "71%",
+      "refillDemand": "Low",
+      "energyMode": "Bowl lights staged down by section"
+    },
+    "zones": [
+      { "id": "north", "name": "North Gate", "type": "Entry", "x": 43, "y": 3, "w": 18, "h": 12, "density": 76, "wait": 11, "status": "rising", "accessible": "Gate N3 elevator lane" },
+      { "id": "west", "name": "West Transit", "type": "Transit", "x": 8, "y": 39, "w": 20, "h": 15, "density": 94, "wait": 24, "status": "rising", "accessible": "Ramp W2 from metro plaza" },
+      { "id": "south", "name": "South Gate", "type": "Entry", "x": 42, "y": 82, "w": 18, "h": 12, "density": 66, "wait": 10, "status": "stable", "accessible": "Gate S1 step-free lane" },
+      { "id": "east", "name": "East Ramp", "type": "Ramp", "x": 78, "y": 39, "w": 18, "h": 15, "density": 73, "wait": 12, "status": "rising", "accessible": "Ramp E4" },
+      { "id": "concourse", "name": "Concourse A", "type": "Concourse", "x": 30, "y": 26, "w": 18, "h": 12, "density": 58, "wait": 8, "status": "falling", "accessible": "Lift bank A" },
+      { "id": "accessible", "name": "Access Hub", "type": "Support", "x": 60, "y": 25, "w": 16, "h": 12, "density": 47, "wait": 5, "status": "stable", "accessible": "Access Hub lift corridor" },
+      { "id": "bowl", "name": "Lower Bowl", "type": "Seating", "x": 39, "y": 52, "w": 22, "h": 14, "density": 71, "wait": 9, "status": "falling", "accessible": "Tunnel 117 lift" },
+      { "id": "volunteers", "name": "Volunteer Check", "type": "Staff", "x": 63, "y": 68, "w": 18, "h": 12, "density": 62, "wait": 5, "status": "stable", "accessible": "Service corridor V1" }
+    ],
+    "incidents": [
+      { "id": "INC-311", "title": "Metro plaza reaching crowd cap", "zone": "West Transit", "severity": "critical", "owner": "Transport liaison", "eta": "2 min" },
+      { "id": "INC-318", "title": "Rain poncho distribution request", "zone": "South Gate", "severity": "low", "owner": "Guest services", "eta": "12 min" },
+      { "id": "INC-320", "title": "Lost child desk needs translator", "zone": "Access Hub", "severity": "high", "owner": "Family services", "eta": "5 min" }
+    ]
+  },
+  "weather": {
+    "id": "weather",
+    "label": "Weather delay",
+    "matchClock": "Delay +18",
+    "weather": "Lightning hold active; covered concourse demand rising",
+    "transit": "Inbound transit paused; shuttle bays ready for staged restart",
+    "transport": {
+      "transitLoad": "61%",
+      "shuttleBays": "8 ready",
+      "bikeValet": "19% free"
+    },
+    "sustainability": {
+      "diversion": "67%",
+      "refillDemand": "High near sheltered zones",
+      "energyMode": "Weather hold power reserve"
+    },
+    "zones": [
+      { "id": "north", "name": "North Gate", "type": "Entry", "x": 43, "y": 3, "w": 18, "h": 12, "density": 63, "wait": 8, "status": "stable", "accessible": "Gate N3 elevator lane" },
+      { "id": "west", "name": "West Transit", "type": "Transit", "x": 8, "y": 39, "w": 20, "h": 15, "density": 42, "wait": 4, "status": "falling", "accessible": "Ramp W2 from metro plaza" },
+      { "id": "south", "name": "South Gate", "type": "Entry", "x": 42, "y": 82, "w": 18, "h": 12, "density": 52, "wait": 6, "status": "stable", "accessible": "Gate S1 step-free lane" },
+      { "id": "east", "name": "East Ramp", "type": "Ramp", "x": 78, "y": 39, "w": 18, "h": 15, "density": 81, "wait": 15, "status": "rising", "accessible": "Ramp E4" },
+      { "id": "concourse", "name": "Concourse A", "type": "Concourse", "x": 30, "y": 26, "w": 18, "h": 12, "density": 88, "wait": 17, "status": "rising", "accessible": "Lift bank A" },
+      { "id": "accessible", "name": "Access Hub", "type": "Support", "x": 60, "y": 25, "w": 16, "h": 12, "density": 75, "wait": 10, "status": "rising", "accessible": "Access Hub lift corridor" },
+      { "id": "bowl", "name": "Lower Bowl", "type": "Seating", "x": 39, "y": 52, "w": 22, "h": 14, "density": 34, "wait": 2, "status": "falling", "accessible": "Tunnel 117 lift" },
+      { "id": "volunteers", "name": "Volunteer Check", "type": "Staff", "x": 63, "y": 68, "w": 18, "h": 12, "density": 57, "wait": 4, "status": "stable", "accessible": "Service corridor V1" }
+    ],
+    "incidents": [
+      { "id": "INC-407", "title": "Sheltered concourse near cap", "zone": "Concourse A", "severity": "high", "owner": "Safety officer", "eta": "3 min" },
+      { "id": "INC-409", "title": "Accessible seating guests request weather-safe route", "zone": "Access Hub", "severity": "high", "owner": "Accessibility lead", "eta": "4 min" }
+    ]
+  }
+}
