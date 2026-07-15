@@ -17,4 +17,4 @@ services:
       - key: GROQ_BASE_URL
         value: https://api.groq.com/openai/v1
       - key: DISABLE_AUTH
-        value: "false"
+        value: "true"
