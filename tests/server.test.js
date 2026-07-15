@@ -1,4 +1,7 @@
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const http = require("node:http");
+const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
 const { createAppServer, getAiConfig, riskFromDensity } = require("../server");
@@ -145,7 +148,6 @@ test("authenticated operators can create custom scenarios for AI briefings", asy
   process.env.APP_ACCESS_TOKEN = "test-access-token";
 
   const server = await startTestServer();
-  let createdId = "";
   try {
     const login = await fetch(`${server.url}/api/session`, {
       method: "POST",
@@ -194,7 +196,7 @@ test("authenticated operators can create custom scenarios for AI briefings", asy
       })
     });
     const createBody = await createResponse.json();
-    createdId = createBody.scenario && createBody.scenario.id;
+    const createdId = createBody.scenario && createBody.scenario.id;
 
     assert.equal(createResponse.status, 201);
     assert.match(createdId, /^test-custom-/);
@@ -216,7 +218,6 @@ test("authenticated operators can create custom scenarios for AI briefings", asy
     assert.match(briefingBody.summary, /Test North/);
   } finally {
     await server.close();
-    removeCustomScenario(createdId);
     restoreEnv(previous);
   }
 });
@@ -288,6 +289,49 @@ test("briefings are cached briefly per trusted scenario", async () => {
   }
 });
 
+test("invalid provider JSON returns a generic AI provider error", async () => {
+  const previous = captureEnv(appEnvNames());
+  clearEnv(appEnvNames());
+  const restoreConsoleError = muteConsoleError();
+  const provider = await startProviderServer(() => ({
+    choices: [
+      {
+        message: {
+          content: "```json\n{\"headline\":\n```"
+        }
+      }
+    ]
+  }));
+  process.env.AI_API_KEY = "test-provider-key";
+  process.env.AI_MODEL = "test-model";
+  process.env.AI_BASE_URL = provider.url;
+
+  const server = await startTestServer({
+    disableAuth: true
+  });
+  try {
+    const response = await fetch(`${server.url}/api/ai/briefing`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        scenarioId: "arrival"
+      })
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 502);
+    assert.equal(body.error, "ai_provider_error");
+    assert.equal(body.message, "AI provider request failed");
+  } finally {
+    restoreConsoleError();
+    await server.close();
+    await provider.close();
+    restoreEnv(previous);
+  }
+});
+
 test("risk helper maps high density to critical posture", () => {
   assert.equal(riskFromDensity(93), "critical");
   assert.equal(riskFromDensity(84), "high");
@@ -334,9 +378,38 @@ test("Groq key wins over placeholder generic base URL when generic key is empty"
 });
 
 function startTestServer(options = {}) {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "stadiumpulse-test-"));
   const server = createAppServer({
     publicDir: path.join(__dirname, "..", "public"),
+    customScenarioFile: path.join(tempDir, "custom-scenarios.json"),
     ...options
+  });
+
+  return new Promise(resolve => {
+    server.listen(0, "127.0.0.1", () => {
+      resolve({
+        url: `http://127.0.0.1:${server.address().port}`,
+        close: () => new Promise(done => {
+          server.close(() => {
+            fs.rmSync(tempDir, {
+              recursive: true,
+              force: true
+            });
+            done();
+          });
+        })
+      });
+    });
+  });
+}
+
+function startProviderServer(makeResponse) {
+  const server = http.createServer((req, res) => {
+    req.resume();
+    res.writeHead(200, {
+      "Content-Type": "application/json"
+    });
+    res.end(JSON.stringify(makeResponse(req)));
   });
 
   return new Promise(resolve => {
@@ -394,22 +467,10 @@ function restoreEnv(previous) {
   });
 }
 
-function removeCustomScenario(id) {
-  if (!id) {
-    return;
-  }
-
-  const fs = require("node:fs");
-  const filePath = path.join(__dirname, "..", "data", "custom-scenarios.json");
-  if (!fs.existsSync(filePath)) {
-    return;
-  }
-
-  const scenarios = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  delete scenarios[id];
-  if (Object.keys(scenarios).length === 0) {
-    fs.rmSync(filePath);
-  } else {
-    fs.writeFileSync(filePath, `${JSON.stringify(scenarios, null, 2)}\n`);
-  }
+function muteConsoleError() {
+  const original = console.error;
+  console.error = () => {};
+  return () => {
+    console.error = original;
+  };
 }

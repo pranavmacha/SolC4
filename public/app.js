@@ -212,12 +212,20 @@ async function unlockConsole() {
 function updateAccessGate() {
   const locked = state.authRequired && !state.authenticated;
   dom.accessGate.classList.toggle("hidden", !locked);
-  dom.briefingButton.disabled = locked;
-  dom.assistantForm.querySelector("button").disabled = locked;
-  dom.scenarioForm.querySelector("button").disabled = locked;
+  setProtectedControlsDisabled(locked);
   if (locked) {
     dom.accessToken.focus();
   }
+}
+
+function canUseProtectedFeatures() {
+  return !state.authRequired || state.authenticated;
+}
+
+function setProtectedControlsDisabled(disabled) {
+  dom.briefingButton.disabled = disabled;
+  dom.assistantForm.querySelector("button").disabled = disabled;
+  dom.scenarioForm.querySelector("button").disabled = disabled;
 }
 
 function seedCustomScenarioForm() {
@@ -303,7 +311,7 @@ async function createCustomScenario() {
   } catch (error) {
     setScenarioMessage(error.message, "error");
   } finally {
-    submitButton.disabled = false;
+    submitButton.disabled = !canUseProtectedFeatures();
   }
 }
 
@@ -398,6 +406,10 @@ function renderIncidents(incidents) {
 }
 
 async function requestBriefing() {
+  if (!canUseProtectedFeatures()) {
+    return;
+  }
+
   const previousText = dom.briefingButton.textContent;
   dom.briefingButton.disabled = true;
   dom.briefingButton.textContent = "Generating...";
@@ -422,7 +434,7 @@ async function requestBriefing() {
     dom.briefingSummary.textContent = error.message;
     dom.briefingPriorities.innerHTML = "";
   } finally {
-    dom.briefingButton.disabled = false;
+    dom.briefingButton.disabled = !canUseProtectedFeatures();
     dom.briefingButton.textContent = previousText;
   }
 }

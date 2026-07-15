@@ -41,6 +41,11 @@ const MIME_TYPES = {
 function createAppServer(options = {}) {
   const publicDir = options.publicDir || path.join(__dirname, "public");
   const authRequired = options.disableAuth ? false : shouldRequireAuth();
+  const appScenarioStore = options.scenarioStore || (options.customScenarioFile
+    ? createScenarioStore({
+        customFile: options.customScenarioFile
+      })
+    : scenarioStore);
 
   return http.createServer(async (req, res) => {
     applySecurityHeaders(req, res);
@@ -50,7 +55,8 @@ function createAppServer(options = {}) {
 
       if (requestUrl.pathname.startsWith("/api/")) {
         await handleApi(req, res, requestUrl.pathname, {
-          authRequired
+          authRequired,
+          scenarioStore: appScenarioStore
         });
         return;
       }
@@ -63,6 +69,8 @@ function createAppServer(options = {}) {
 }
 
 async function handleApi(req, res, pathname, options) {
+  const appScenarioStore = options.scenarioStore || scenarioStore;
+
   if (req.method === "GET" && pathname === "/api/health") {
     sendJson(res, 200, {
       service: "StadiumPulse 26",
@@ -88,7 +96,7 @@ async function handleApi(req, res, pathname, options) {
     }
 
     sendJson(res, 200, {
-      scenarios: scenarioStore.listScenarios()
+      scenarios: appScenarioStore.listScenarios()
     });
     return;
   }
@@ -99,7 +107,7 @@ async function handleApi(req, res, pathname, options) {
     }
 
     const payload = await readJson(req);
-    const scenario = await scenarioStore.createScenario(payload);
+    const scenario = await appScenarioStore.createScenario(payload);
     clearBriefingCacheForScenario(scenario.id);
     sendJson(res, 201, {
       scenario
@@ -143,7 +151,7 @@ async function handleApi(req, res, pathname, options) {
     }
 
     const payload = await readJson(req);
-    const generated = await generateAssistantResponse(payload);
+    const generated = await generateAssistantResponse(payload, appScenarioStore);
     sendJson(res, 200, generated);
     return;
   }
@@ -154,7 +162,7 @@ async function handleApi(req, res, pathname, options) {
     }
 
     const payload = await readJson(req);
-    const generated = await generateOperationsBriefing(payload);
+    const generated = await generateOperationsBriefing(payload, appScenarioStore);
     sendJson(res, 200, generated);
     return;
   }
@@ -509,13 +517,7 @@ function readBearerToken(req) {
 
 function isValidAccessToken(value) {
   const expected = process.env.APP_ACCESS_TOKEN || "";
-  if (!expected || !value) {
-    return false;
-  }
-
-  const actualBuffer = Buffer.from(String(value));
-  const expectedBuffer = Buffer.from(expected);
-  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
+  return Boolean(expected && value && timingSafeStringEqual(value, expected));
 }
 
 function setSessionCookie(req, res) {
@@ -546,7 +548,7 @@ function clearSessionCookie(res) {
 
 function verifySessionCookie(value) {
   const [payload, signature] = String(value || "").split(".");
-  if (!payload || !signature || signSessionPayload(payload) !== signature) {
+  if (!payload || !signature || !timingSafeStringEqual(signature, signSessionPayload(payload))) {
     return false;
   }
 
@@ -563,6 +565,12 @@ function signSessionPayload(payload) {
     .createHmac("sha256", process.env.APP_ACCESS_TOKEN || "missing-session-secret")
     .update(payload)
     .digest("base64url");
+}
+
+function timingSafeStringEqual(actual, expected) {
+  const actualBuffer = Buffer.from(String(actual));
+  const expectedBuffer = Buffer.from(String(expected));
+  return actualBuffer.length === expectedBuffer.length && crypto.timingSafeEqual(actualBuffer, expectedBuffer);
 }
 
 function base64UrlEncode(value) {
@@ -589,8 +597,8 @@ function parseCookies(req) {
 
 
 
-async function generateAssistantResponse(payload) {
-  const snapshot = makeSnapshot(payload);
+async function generateAssistantResponse(payload, store = scenarioStore) {
+  const snapshot = makeSnapshot(payload, store);
   const selectedZone = selectedZoneFromPayload(payload, snapshot);
   const systemPrompt = [
     "You are StadiumPulse 26, a safety-first generative AI copilot for FIFA World Cup 2026 stadium operations and fan support.",
@@ -625,8 +633,8 @@ async function generateAssistantResponse(payload) {
   return normalizeAssistantResult(modelResult, "configured-ai");
 }
 
-async function generateOperationsBriefing(payload) {
-  const snapshot = makeSnapshot(payload);
+async function generateOperationsBriefing(payload, store = scenarioStore) {
+  const snapshot = makeSnapshot(payload, store);
   const cacheKey = briefingCacheKey(snapshot.scenarioId);
   const cached = getCachedBriefing(cacheKey);
   if (cached) {
@@ -838,7 +846,7 @@ function makeProviderError(status, details) {
     details: sanitizeLogMessage(details)
   }));
 
-  return new HttpError(502, "AI provider request failed", false);
+  return new HttpError(502, "AI provider request failed", true);
 }
 
 function hasConfiguredModel() {
@@ -866,16 +874,20 @@ function parseJsonObject(content) {
     const start = content.indexOf("{");
     const end = content.lastIndexOf("}");
     if (start >= 0 && end > start) {
-      return JSON.parse(content.slice(start, end + 1));
+      try {
+        return JSON.parse(content.slice(start, end + 1));
+      } catch (fallbackError) {
+        return null;
+      }
     }
   }
 
   return null;
 }
 
-function makeSnapshot(payload) {
+function makeSnapshot(payload, store = scenarioStore) {
   const scenarioId = sanitizeScenarioId(payload.scenarioId || payload.scenario || "arrival");
-  const snapshot = scenarioStore.getScenario(scenarioId);
+  const snapshot = store.getScenario(scenarioId);
   if (!snapshot) {
     throw new HttpError(400, "Unknown scenario", true);
   }
