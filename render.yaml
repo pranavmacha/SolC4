@@ -5,10 +5,6 @@ services:
     plan: free
     buildCommand: npm install
     startCommand: npm start
-    disk:
-      name: stadiumpulse-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: PORT
         value: 10000
@@ -20,7 +16,5 @@ services:
         value: openai/gpt-oss-20b
       - key: GROQ_BASE_URL
         value: https://api.groq.com/openai/v1
-      - key: CUSTOM_SCENARIO_FILE
-        value: /var/data/custom-scenarios.json
       - key: DISABLE_AUTH
         value: "false"
