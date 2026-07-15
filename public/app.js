@@ -8,8 +8,11 @@ const state = {
   authenticated: true
 };
 const CHAT_HISTORY_MAX = 20;
+const CHAT_DISPLAY_MAX = 6;
 
 const dom = {};
+
+const SOURCE_LABELS = { "configured-ai": "Configured AI", "demo-ai": "Demo AI" };
 
 document.addEventListener("DOMContentLoaded", async () => {
   cacheDom();
@@ -67,8 +70,10 @@ function cacheDom() {
     "customClock",
     "customWeather",
     "customTransit",
-    "customZones",
-    "customIncidents",
+    "zoneBuilder",
+    "incidentBuilder",
+    "addZoneBtn",
+    "addIncidentBtn",
     "scenarioMessage"
   ].forEach(id => {
     dom[id] = document.getElementById(id);
@@ -76,7 +81,7 @@ function cacheDom() {
 }
 
 function populateScenarios() {
-  dom.scenarioSelect.innerHTML = "";
+  dom.scenarioSelect.replaceChildren();
   Object.entries(scenarios).forEach(([id, scenario]) => {
     const option = document.createElement("option");
     option.value = id;
@@ -87,12 +92,9 @@ function populateScenarios() {
 }
 
 async function loadScenarios() {
-  const data = await postJson("/api/scenarios", null, {
-    method: "GET"
-  });
-  Object.keys(scenarios).forEach(id => {
-    delete scenarios[id];
-  });
+  const data = await postJson("/api/scenarios", null, { method: "GET" });
+
+  for (const k in scenarios) delete scenarios[k];
   Object.assign(scenarios, data.scenarios || {});
 
   const scenarioIds = Object.keys(scenarios);
@@ -117,11 +119,9 @@ function bindEvents() {
     }
   });
 
-  dom.personaSelect.addEventListener("change", render);
-  dom.languageSelect.addEventListener("change", render);
-  dom.stepFree.addEventListener("change", render);
-  dom.lowSensory.addEventListener("change", render);
-  dom.audioDescription.addEventListener("change", render);
+  ["personaSelect", "languageSelect", "stepFree", "lowSensory", "audioDescription"]
+    .forEach(id => dom[id].addEventListener("change", render));
+
   dom.briefingButton.addEventListener("click", requestBriefing);
 
   document.querySelectorAll("[data-prompt]").forEach(button => {
@@ -146,14 +146,19 @@ function bindEvents() {
     createCustomScenario();
   });
 
-  seedCustomScenarioForm();
+  dom.addZoneBtn.addEventListener("click", () => addZoneCard());
+  dom.addIncidentBtn.addEventListener("click", () => addIncidentCard());
+
+  seedCustomScenarioBuilder();
 }
+
+// ---------------------------------------------------------------------------
+// Access gate
+// ---------------------------------------------------------------------------
 
 async function initializeAccess() {
   try {
-    const response = await fetch("/api/session", {
-      credentials: "same-origin"
-    });
+    const response = await fetch("/api/session", { credentials: "same-origin" });
     const data = await response.json();
     state.authRequired = Boolean(data.authRequired);
     state.authenticated = Boolean(data.authenticated);
@@ -183,9 +188,7 @@ async function unlockConsole() {
     const response = await fetch("/api/session", {
       method: "POST",
       credentials: "same-origin",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ accessToken })
     });
     const data = await response.json();
@@ -213,9 +216,7 @@ function updateAccessGate() {
   const locked = state.authRequired && !state.authenticated;
   dom.accessGate.classList.toggle("hidden", !locked);
   setProtectedControlsDisabled(locked);
-  if (locked) {
-    dom.accessToken.focus();
-  }
+  if (locked) dom.accessToken.focus();
 }
 
 function canUseProtectedFeatures() {
@@ -228,76 +229,212 @@ function setProtectedControlsDisabled(disabled) {
   dom.scenarioForm.querySelector("button").disabled = disabled;
 }
 
-function seedCustomScenarioForm() {
-  dom.customZones.value = JSON.stringify([
-    {
-      id: "north-entry",
-      name: "North Entry",
-      type: "Entry",
-      x: 42,
-      y: 5,
-      w: 18,
-      h: 12,
-      density: 84,
-      wait: 16,
-      status: "rising",
-      accessible: "North lift lane"
-    },
-    {
-      id: "relief-route",
-      name: "Relief Route",
-      type: "Concourse",
-      x: 62,
-      y: 62,
-      w: 18,
-      h: 12,
-      density: 38,
-      wait: 4,
-      status: "stable",
-      accessible: "Ramp R2"
-    }
-  ], null, 2);
+// ---------------------------------------------------------------------------
+// Custom scenario builder
+// ---------------------------------------------------------------------------
 
-  dom.customIncidents.value = JSON.stringify([
-    {
-      id: "INC-CUSTOM-1",
-      title: "Queue building near north entry",
-      zone: "North Entry",
-      severity: "high",
-      owner: "Gate lead",
-      eta: "5 min"
-    }
-  ], null, 2);
+let zoneCounter = 0;
+let incidentCounter = 0;
+
+function seedCustomScenarioBuilder() {
+  addZoneCard({ name: "North Entry", type: "Entry", density: 84, wait: 16, status: "rising", accessible: "North lift lane" });
+  addZoneCard({ name: "Relief Route", type: "Concourse", density: 38, wait: 4, status: "stable", accessible: "Ramp R2" });
+  addIncidentCard({ title: "Queue building near north entry", zone: "North Entry", severity: "high", owner: "Gate lead", eta: "5 min" });
 }
 
+/** Tiny helper for generating `selected` attribute in option HTML. */
+const sel = (val, match) => val === match ? " selected" : "";
+
+function addZoneCard(d = {}) {
+  zoneCounter += 1;
+  const index = zoneCounter;
+  const card = document.createElement("div");
+  card.className = "builder-card";
+  card.dataset.builderType = "zone";
+
+  const densityVal = d.density != null ? d.density : 50;
+
+  card.innerHTML = `
+    <div class="builder-card-header">
+      <span>Zone ${index}</span>
+      <button type="button" class="builder-remove-btn" aria-label="Remove zone">Remove</button>
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label>Name</label>
+        <input type="text" data-field="name" maxlength="80" placeholder="e.g. North Gate" value="${escapeAttr(d.name || "")}">
+      </div>
+      <div class="form-field">
+        <label>Type</label>
+        <select data-field="type">
+          <option${sel(d.type, "Entry")}>Entry</option>
+          <option${sel(d.type, "Transit")}>Transit</option>
+          <option${sel(d.type, "Concourse")}>Concourse</option>
+          <option${sel(d.type, "Ramp")}>Ramp</option>
+          <option${sel(d.type, "Seating")}>Seating</option>
+          <option${sel(d.type, "Support")}>Support</option>
+          <option${sel(d.type, "Staff")}>Staff</option>
+        </select>
+      </div>
+    </div>
+    <label>Crowd density</label>
+    <div class="builder-slider-row">
+      <input type="range" data-field="density" min="0" max="100" value="${densityVal}">
+      <output>${densityVal}%</output>
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label>Wait (min)</label>
+        <input type="text" data-field="wait" maxlength="6" placeholder="0" value="${d.wait != null ? d.wait : ""}">
+      </div>
+      <div class="form-field">
+        <label>Status</label>
+        <select data-field="status">
+          <option${sel(d.status, "stable")}>stable</option>
+          <option${sel(d.status, "rising")}>rising</option>
+          <option${sel(d.status, "falling")}>falling</option>
+        </select>
+      </div>
+    </div>
+    <label>Accessible route</label>
+    <input type="text" data-field="accessible" maxlength="120" placeholder="e.g. Gate N3 elevator lane" value="${escapeAttr(d.accessible || "")}">
+  `;
+
+  const slider = card.querySelector("input[type=range]");
+  const output = card.querySelector("output");
+  slider.addEventListener("input", () => { output.textContent = `${slider.value}%`; });
+
+  card.querySelector(".builder-remove-btn").addEventListener("click", () => {
+    card.remove();
+    updateBuilderEmpty(dom.zoneBuilder, "zone");
+  });
+
+  dom.zoneBuilder.append(card);
+  updateBuilderEmpty(dom.zoneBuilder, "zone");
+}
+
+function addIncidentCard(d = {}) {
+  incidentCounter += 1;
+  const index = incidentCounter;
+  const card = document.createElement("div");
+  const severity = d.severity || "medium";
+  card.className = `builder-card severity-${severity}`;
+  card.dataset.builderType = "incident";
+
+  card.innerHTML = `
+    <div class="builder-card-header">
+      <span>Incident ${index}</span>
+      <button type="button" class="builder-remove-btn" aria-label="Remove incident">Remove</button>
+    </div>
+    <label>Title</label>
+    <input type="text" data-field="title" maxlength="120" placeholder="e.g. Queue building near north entry" value="${escapeAttr(d.title || "")}">
+    <div class="form-row">
+      <div class="form-field">
+        <label>Zone</label>
+        <input type="text" data-field="zone" maxlength="80" placeholder="e.g. North Gate" value="${escapeAttr(d.zone || "")}">
+      </div>
+      <div class="form-field">
+        <label>Severity</label>
+        <select data-field="severity">
+          <option${sel(severity, "low")}>low</option>
+          <option${sel(severity, "medium")}>medium</option>
+          <option${sel(severity, "high")}>high</option>
+          <option${sel(severity, "critical")}>critical</option>
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-field">
+        <label>Owner</label>
+        <input type="text" data-field="owner" maxlength="80" placeholder="e.g. Gate lead" value="${escapeAttr(d.owner || "")}">
+      </div>
+      <div class="form-field">
+        <label>ETA</label>
+        <input type="text" data-field="eta" maxlength="40" placeholder="e.g. 5 min" value="${escapeAttr(d.eta || "")}">
+      </div>
+    </div>
+  `;
+
+  const severitySelect = card.querySelector("select[data-field=severity]");
+  severitySelect.addEventListener("change", () => {
+    card.className = `builder-card severity-${severitySelect.value}`;
+  });
+
+  card.querySelector(".builder-remove-btn").addEventListener("click", () => {
+    card.remove();
+    updateBuilderEmpty(dom.incidentBuilder, "incident");
+  });
+
+  dom.incidentBuilder.append(card);
+  updateBuilderEmpty(dom.incidentBuilder, "incident");
+}
+
+function updateBuilderEmpty(container, type) {
+  container.querySelector(".builder-empty")?.remove();
+
+  if (container.querySelectorAll(".builder-card").length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "builder-empty";
+    empty.textContent = type === "zone"
+      ? "No zones added yet. Click \"+ Add zone\" to create one."
+      : "No incidents. Click \"+ Add incident\" to add one (optional).";
+    container.append(empty);
+  }
+}
+
+/** Reads a data-field value from a builder card. */
+function readCardField(card, name) {
+  return (card.querySelector(`[data-field="${name}"]`) || {}).value || "";
+}
+
+function collectZonesFromBuilder() {
+  return Array.from(dom.zoneBuilder.querySelectorAll(".builder-card")).map(card => ({
+    name: readCardField(card, "name"),
+    type: readCardField(card, "type"),
+    density: Number(readCardField(card, "density")) || 0,
+    wait: Number(readCardField(card, "wait")) || 0,
+    status: readCardField(card, "status"),
+    accessible: readCardField(card, "accessible")
+  }));
+}
+
+function collectIncidentsFromBuilder() {
+  return Array.from(dom.incidentBuilder.querySelectorAll(".builder-card")).map(card => ({
+    title: readCardField(card, "title"),
+    zone: readCardField(card, "zone"),
+    severity: readCardField(card, "severity"),
+    owner: readCardField(card, "owner"),
+    eta: readCardField(card, "eta")
+  }));
+}
+
+// ---------------------------------------------------------------------------
+// Custom scenario creation
+// ---------------------------------------------------------------------------
+
 async function createCustomScenario() {
-  const submitButton = dom.scenarioForm.querySelector("button");
+  const submitButton = dom.scenarioForm.querySelector("button[type=submit]");
   setScenarioMessage("Creating scenario...", "");
   submitButton.disabled = true;
 
   try {
+    const zones = collectZonesFromBuilder();
+    const incidents = collectIncidentsFromBuilder();
+
+    if (!dom.customLabel.value.trim()) throw new Error("Scenario name is required.");
+    if (zones.length === 0) throw new Error("Add at least one zone.");
+    if (zones.find(z => !z.name)) throw new Error("Every zone needs a name.");
+
     const payload = {
       label: dom.customLabel.value.trim(),
       matchClock: dom.customClock.value.trim() || "Live",
       weather: dom.customWeather.value.trim() || "No weather signal provided",
       transit: dom.customTransit.value.trim() || "No transit signal provided",
-      transport: {
-        transitLoad: "Custom",
-        shuttleBays: "Custom",
-        bikeValet: "Custom"
-      },
-      sustainability: {
-        diversion: "Custom",
-        refillDemand: "Custom",
-        energyMode: "Custom"
-      },
-      zones: parseScenarioJson(dom.customZones.value, "Zones JSON"),
-      incidents: parseScenarioJson(dom.customIncidents.value, "Incidents JSON")
+      transport: { transitLoad: "Custom", shuttleBays: "Custom", bikeValet: "Custom" },
+      sustainability: { diversion: "Custom", refillDemand: "Custom", energyMode: "Custom" },
+      zones,
+      incidents
     };
-
-    if (!payload.label) {
-      throw new Error("Scenario name is required.");
-    }
 
     const data = await postJson("/api/scenarios", payload);
     const scenario = data.scenario;
@@ -315,28 +452,19 @@ async function createCustomScenario() {
   }
 }
 
-function parseScenarioJson(value, label) {
-  try {
-    const parsed = JSON.parse(value || "[]");
-    if (!Array.isArray(parsed)) {
-      throw new Error(`${label} must be a JSON array.`);
-    }
-    return parsed;
-  } catch (error) {
-    throw new Error(`${label}: ${error.message}`);
-  }
-}
-
 function setScenarioMessage(message, type) {
   dom.scenarioMessage.textContent = message;
   dom.scenarioMessage.className = `form-message${type ? ` ${type}` : ""}`;
 }
 
+// ---------------------------------------------------------------------------
+// Rendering
+// ---------------------------------------------------------------------------
+
 function render() {
   const scenario = currentScenario();
-  if (!scenario) {
-    return;
-  }
+  if (!scenario) return;
+
   const selected = selectedZone();
   const peak = Math.max(...scenario.zones.map(item => item.density));
   const averageWait = Math.round(scenario.zones.reduce((sum, item) => sum + item.wait, 0) / scenario.zones.length);
@@ -405,6 +533,10 @@ function renderIncidents(incidents) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// AI briefing & assistant
+// ---------------------------------------------------------------------------
+
 async function requestBriefing() {
   if (!canUseProtectedFeatures()) {
     return;
@@ -416,9 +548,7 @@ async function requestBriefing() {
   dom.briefingSource.textContent = "AI working";
 
   try {
-    const data = await postJson("/api/ai/briefing", {
-      scenarioId: state.scenarioId
-    });
+    const data = await postJson("/api/ai/briefing", { scenarioId: state.scenarioId });
     dom.briefingSource.textContent = sourceLabel(data.source);
     dom.briefingHeadline.textContent = data.headline;
     dom.briefingSummary.textContent = data.summary;
@@ -446,10 +576,7 @@ async function askAssistant() {
     return;
   }
 
-  appendChat({
-    role: "user",
-    text: question
-  });
+  appendChat({ role: "user", text: question });
   renderChat(true);
   dom.assistantInput.value = "";
   dom.assistantSource.textContent = "AI working";
@@ -491,9 +618,8 @@ async function askAssistant() {
 
 function appendChat(message) {
   state.chat.push(message);
-  if (state.chat.length > CHAT_HISTORY_MAX) {
-    state.chat.splice(0, state.chat.length - CHAT_HISTORY_MAX);
-  }
+  // We push one at a time, so only one element ever needs trimming.
+  if (state.chat.length > CHAT_HISTORY_MAX) state.chat.shift();
 }
 
 function renderChat(isLoading = false) {
@@ -507,7 +633,7 @@ function renderChat(isLoading = false) {
     return;
   }
 
-  state.chat.slice(-6).forEach(message => {
+  state.chat.slice(-CHAT_DISPLAY_MAX).forEach(message => {
     const node = document.createElement("article");
     node.className = `chat-message ${message.role}`;
     if (message.role === "user") {
@@ -534,6 +660,10 @@ function renderChat(isLoading = false) {
   dom.chatLog.scrollTop = dom.chatLog.scrollHeight;
 }
 
+// ---------------------------------------------------------------------------
+// Utilities
+// ---------------------------------------------------------------------------
+
 function accessibilityPrefs() {
   return {
     stepFree: dom.stepFree.checked,
@@ -547,18 +677,14 @@ async function postJson(url, body, options = {}) {
   const fetchOptions = {
     method,
     credentials: "same-origin",
-    headers: {
-      "Content-Type": "application/json"
-    }
+    headers: { "Content-Type": "application/json" }
   };
 
   if (body !== null && body !== undefined) {
     fetchOptions.body = JSON.stringify(body);
   }
 
-  const response = await fetch(url, {
-    ...fetchOptions
-  });
+  const response = await fetch(url, fetchOptions);
   const data = await response.json();
 
   if (!response.ok) {
@@ -581,16 +707,11 @@ function selectedZone() {
   return currentScenario().zones.find(item => item.id === state.selectedZoneId) || currentScenario().zones[0];
 }
 
+// NOTE: keep in sync with riskFromDensity in server.js
 function densityClass(density) {
-  if (density >= 92) {
-    return "critical";
-  }
-  if (density >= 82) {
-    return "high";
-  }
-  if (density >= 65) {
-    return "medium";
-  }
+  if (density >= 92) return "critical";
+  if (density >= 82) return "high";
+  if (density >= 65) return "medium";
   return "low";
 }
 
@@ -600,15 +721,10 @@ function riskLabel(density) {
 }
 
 function sourceLabel(source) {
-  if (source === "configured-ai") {
-    return "Configured AI";
-  }
-  if (source === "demo-ai") {
-    return "Demo AI";
-  }
-  return "Local";
+  return SOURCE_LABELS[source] || "Local";
 }
 
+/** Single HTML/attribute escape function — covers &, <, >, ", and '. */
 function escapeHtml(value) {
   return String(value)
     .replace(/&/g, "&amp;")
@@ -617,3 +733,6 @@ function escapeHtml(value) {
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#039;");
 }
+
+// escapeAttr is now just escapeHtml — merged since escapeHtml is a superset.
+const escapeAttr = escapeHtml;

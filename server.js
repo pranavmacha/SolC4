@@ -2,9 +2,9 @@ const http = require("node:http");
 const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
-const { URL } = require("node:url");
 const { createAsyncLimiter } = require("./src/asyncLimiter");
 const { getAiConfig, getRuntimeConfig, loadEnvFile } = require("./src/config");
+const { sanitizeText, sanitizeChoice, cloneJson } = require("./src/sanitize");
 const { createScenarioStore } = require("./src/scenarioStore");
 
 loadEnvFile(path.join(__dirname, ".env"));
@@ -37,14 +37,36 @@ const MIME_TYPES = {
   ".ico": "image/x-icon"
 };
 
+const ERROR_NAMES = {
+  400: "bad_request",
+  401: "unauthorized",
+  403: "forbidden",
+  404: "not_found",
+  405: "method_not_allowed",
+  413: "payload_too_large",
+  415: "unsupported_media_type",
+  429: "rate_limited",
+  502: "ai_provider_error",
+  503: "service_unavailable"
+};
+
+const UNKNOWN_ZONE = {
+  id: "unknown",
+  name: "Unknown zone",
+  density: 0,
+  wait: 0,
+  accessible: "Ask nearest volunteer"
+};
+
+// ---------------------------------------------------------------------------
+// Server creation
+// ---------------------------------------------------------------------------
 
 function createAppServer(options = {}) {
   const publicDir = options.publicDir || path.join(__dirname, "public");
   const authRequired = options.disableAuth ? false : shouldRequireAuth();
   const appScenarioStore = options.scenarioStore || (options.customScenarioFile
-    ? createScenarioStore({
-        customFile: options.customScenarioFile
-      })
+    ? createScenarioStore({ customFile: options.customScenarioFile })
     : scenarioStore);
 
   return http.createServer(async (req, res) => {
@@ -54,10 +76,7 @@ function createAppServer(options = {}) {
       const requestUrl = makeRequestUrl(req);
 
       if (requestUrl.pathname.startsWith("/api/")) {
-        await handleApi(req, res, requestUrl.pathname, {
-          authRequired,
-          scenarioStore: appScenarioStore
-        });
+        await handleApi(req, res, requestUrl.pathname, { authRequired, scenarioStore: appScenarioStore });
         return;
       }
 
@@ -68,109 +87,90 @@ function createAppServer(options = {}) {
   });
 }
 
+// ---------------------------------------------------------------------------
+// API routing — route-table pattern for clarity
+// ---------------------------------------------------------------------------
+
 async function handleApi(req, res, pathname, options) {
+  const key = `${req.method} ${pathname}`;
   const appScenarioStore = options.scenarioStore || scenarioStore;
 
-  if (req.method === "GET" && pathname === "/api/health") {
-    sendJson(res, 200, {
-      service: "StadiumPulse 26",
-      ok: true,
-      aiConfigured: Boolean(getAiConfig().apiKey && getAiConfig().model),
-      authRequired: options.authRequired,
-      time: new Date().toISOString()
-    });
-    return;
+  switch (key) {
+    case "GET /api/health":
+      return sendJson(res, 200, {
+        service: "StadiumPulse 26",
+        ok: true,
+        aiConfigured: Boolean(getAiConfig().apiKey && getAiConfig().model),
+        authRequired: options.authRequired,
+        time: new Date().toISOString()
+      });
+
+    case "GET /api/session":
+      return sendJson(res, 200, {
+        authRequired: options.authRequired,
+        authenticated: !options.authRequired || isRequestAuthenticated(req)
+      });
+
+    case "GET /api/scenarios":
+      if (!requireApiAuth(req, res, options)) return;
+      return sendJson(res, 200, { scenarios: appScenarioStore.listScenarios() });
+
+    case "POST /api/scenarios":
+      if (!validateOrigin(req, res) || !requireApiAuth(req, res, options) || !enforceRateLimit(req, res, "scenario", SESSION_RATE_LIMIT_MAX)) return;
+      return await handleCreateScenario(req, res, appScenarioStore);
+
+    case "POST /api/session":
+      if (!validateOrigin(req, res) || !enforceRateLimit(req, res, "session", SESSION_RATE_LIMIT_MAX)) return;
+      return await handlePostSession(req, res);
+
+    case "POST /api/session/logout":
+      if (!validateOrigin(req, res)) return;
+      clearSessionCookie(res);
+      return sendJson(res, 200, { ok: true });
+
+    case "POST /api/ai/assistant":
+      if (!validateOrigin(req, res) || !requireApiAuth(req, res, options) || !enforceRateLimit(req, res, "ai", AI_RATE_LIMIT_MAX)) return;
+      return await handleAssistant(req, res, appScenarioStore);
+
+    case "POST /api/ai/briefing":
+      if (!validateOrigin(req, res) || !requireApiAuth(req, res, options) || !enforceRateLimit(req, res, "ai", AI_RATE_LIMIT_MAX)) return;
+      return await handleBriefing(req, res, appScenarioStore);
+
+    default:
+      return sendJson(res, 404, { error: "not_found" });
   }
-
-  if (req.method === "GET" && pathname === "/api/session") {
-    sendJson(res, 200, {
-      authRequired: options.authRequired,
-      authenticated: !options.authRequired || isRequestAuthenticated(req)
-    });
-    return;
-  }
-
-  if (req.method === "GET" && pathname === "/api/scenarios") {
-    if (!requireApiAuth(req, res, options)) {
-      return;
-    }
-
-    sendJson(res, 200, {
-      scenarios: appScenarioStore.listScenarios()
-    });
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/scenarios") {
-    if (!validateOrigin(req, res) || !requireApiAuth(req, res, options) || !enforceRateLimit(req, res, "scenario", SESSION_RATE_LIMIT_MAX)) {
-      return;
-    }
-
-    const payload = await readJson(req);
-    const scenario = await appScenarioStore.createScenario(payload);
-    clearBriefingCacheForScenario(scenario.id);
-    sendJson(res, 201, {
-      scenario
-    });
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/session") {
-    if (!validateOrigin(req, res) || !enforceRateLimit(req, res, "session", SESSION_RATE_LIMIT_MAX)) {
-      return;
-    }
-
-    const payload = await readJson(req);
-    const token = sanitizeText(payload.accessToken, 500);
-    if (!isValidAccessToken(token)) {
-      throw new HttpError(401, "Invalid access token", true);
-    }
-
-    setSessionCookie(req, res);
-    sendJson(res, 200, {
-      ok: true,
-      authenticated: true
-    });
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/session/logout") {
-    if (!validateOrigin(req, res)) {
-      return;
-    }
-    clearSessionCookie(res);
-    sendJson(res, 200, {
-      ok: true
-    });
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/ai/assistant") {
-    if (!validateOrigin(req, res) || !requireApiAuth(req, res, options) || !enforceRateLimit(req, res, "ai", AI_RATE_LIMIT_MAX)) {
-      return;
-    }
-
-    const payload = await readJson(req);
-    const generated = await generateAssistantResponse(payload, appScenarioStore);
-    sendJson(res, 200, generated);
-    return;
-  }
-
-  if (req.method === "POST" && pathname === "/api/ai/briefing") {
-    if (!validateOrigin(req, res) || !requireApiAuth(req, res, options) || !enforceRateLimit(req, res, "ai", AI_RATE_LIMIT_MAX)) {
-      return;
-    }
-
-    const payload = await readJson(req);
-    const generated = await generateOperationsBriefing(payload, appScenarioStore);
-    sendJson(res, 200, generated);
-    return;
-  }
-
-  sendJson(res, 404, {
-    error: "not_found"
-  });
 }
+
+async function handleCreateScenario(req, res, store = scenarioStore) {
+  const payload = await readJson(req);
+  const scenario = await store.createScenario(payload);
+  clearBriefingCacheForScenario(scenario.id);
+  sendJson(res, 201, { scenario });
+}
+
+async function handlePostSession(req, res) {
+  const payload = await readJson(req);
+  const token = sanitizeText(payload.accessToken, 500);
+  if (!isValidAccessToken(token)) {
+    throw new HttpError(401, "Invalid access token", true);
+  }
+  setSessionCookie(req, res);
+  sendJson(res, 200, { ok: true, authenticated: true });
+}
+
+async function handleAssistant(req, res, store = scenarioStore) {
+  const payload = await readJson(req);
+  sendJson(res, 200, await generateAssistantResponse(payload, store));
+}
+
+async function handleBriefing(req, res, store = scenarioStore) {
+  const payload = await readJson(req);
+  sendJson(res, 200, await generateOperationsBriefing(payload, store));
+}
+
+// ---------------------------------------------------------------------------
+// Static file serving
+// ---------------------------------------------------------------------------
 
 async function serveStaticFile(req, res, publicDir, pathname) {
   if (req.method !== "GET" && req.method !== "HEAD") {
@@ -236,6 +236,10 @@ async function statFile(filePath) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Request / response helpers
+// ---------------------------------------------------------------------------
+
 function readJson(req) {
   return new Promise((resolve, reject) => {
     if (!String(req.headers["content-type"] || "").toLowerCase().includes("application/json")) {
@@ -247,10 +251,7 @@ function readJson(req) {
     let settled = false;
 
     req.on("data", chunk => {
-      if (settled) {
-        return;
-      }
-
+      if (settled) return;
       body += chunk;
       if (Buffer.byteLength(body) > MAX_BODY_BYTES) {
         settled = true;
@@ -260,15 +261,8 @@ function readJson(req) {
     });
 
     req.on("end", () => {
-      if (settled) {
-        return;
-      }
-
-      if (!body) {
-        resolve({});
-        return;
-      }
-
+      if (settled) return;
+      if (!body) { resolve({}); return; }
       try {
         resolve(JSON.parse(body));
       } catch (error) {
@@ -277,9 +271,7 @@ function readJson(req) {
     });
 
     req.on("error", error => {
-      if (!settled) {
-        reject(error);
-      }
+      if (!settled) reject(error);
     });
   });
 }
@@ -315,6 +307,10 @@ function getRequestBaseUrl(req) {
   return `${String(proto).split(",")[0].trim()}://${String(host).split(",")[0].trim()}`;
 }
 
+// ---------------------------------------------------------------------------
+// Security headers (preserve all — per AGENTS.md)
+// ---------------------------------------------------------------------------
+
 function applySecurityHeaders(req, res) {
   const csp = [
     "default-src 'self'",
@@ -344,11 +340,23 @@ function isHttpsRequest(req) {
   return String(req.headers["x-forwarded-proto"] || "").split(",")[0].trim() === "https";
 }
 
+// ---------------------------------------------------------------------------
+// Error handling
+// ---------------------------------------------------------------------------
+
 function handleServerError(req, res, error) {
   const statusCode = Number(error && error.statusCode) || 500;
   const safeStatus = statusCode >= 400 && statusCode < 600 ? statusCode : 500;
   const expose = Boolean(error && error.expose);
-  const message = expose ? error.message : safeStatus >= 500 ? "Internal server error" : "Request failed";
+
+  let message;
+  if (expose) {
+    message = error.message;
+  } else if (safeStatus >= 500) {
+    message = "Internal server error";
+  } else {
+    message = "Request failed";
+  }
 
   if (!expose || safeStatus >= 500) {
     console.error(JSON.stringify({
@@ -362,23 +370,9 @@ function handleServerError(req, res, error) {
   }
 
   sendJson(res, safeStatus, {
-    error: errorNameForStatus(safeStatus),
+    error: ERROR_NAMES[safeStatus] || "server_error",
     message
   });
-}
-
-function errorNameForStatus(statusCode) {
-  if (statusCode === 400) return "bad_request";
-  if (statusCode === 401) return "unauthorized";
-  if (statusCode === 403) return "forbidden";
-  if (statusCode === 404) return "not_found";
-  if (statusCode === 405) return "method_not_allowed";
-  if (statusCode === 413) return "payload_too_large";
-  if (statusCode === 415) return "unsupported_media_type";
-  if (statusCode === 429) return "rate_limited";
-  if (statusCode === 502) return "ai_provider_error";
-  if (statusCode === 503) return "service_unavailable";
-  return "server_error";
 }
 
 function sanitizeLogMessage(value) {
@@ -388,18 +382,19 @@ function sanitizeLogMessage(value) {
     .slice(0, 1000);
 }
 
+// ---------------------------------------------------------------------------
+// Authentication & sessions
+// ---------------------------------------------------------------------------
+
 function shouldRequireAuth() {
   if (process.env.DISABLE_AUTH === "true") {
     return false;
   }
-
   return Boolean(process.env.APP_ACCESS_TOKEN || getAiConfig().apiKey || process.env.NODE_ENV === "production");
 }
 
 function requireApiAuth(req, res, options) {
-  if (!options.authRequired) {
-    return true;
-  }
+  if (!options.authRequired) return true;
 
   if (!process.env.APP_ACCESS_TOKEN) {
     sendJson(res, 503, {
@@ -409,9 +404,7 @@ function requireApiAuth(req, res, options) {
     return false;
   }
 
-  if (isRequestAuthenticated(req)) {
-    return true;
-  }
+  if (isRequestAuthenticated(req)) return true;
 
   sendJson(res, 401, {
     error: "unauthorized",
@@ -420,11 +413,13 @@ function requireApiAuth(req, res, options) {
   return false;
 }
 
+/**
+ * Re-creates the allowed-origins set per request intentionally, since
+ * APP_ALLOWED_ORIGINS could change at runtime and the set is tiny.
+ */
 function validateOrigin(req, res) {
   const origin = req.headers.origin;
-  if (!origin) {
-    return true;
-  }
+  if (!origin) return true;
 
   const allowedOrigins = new Set(
     String(process.env.APP_ALLOWED_ORIGINS || "")
@@ -434,14 +429,9 @@ function validateOrigin(req, res) {
   );
   allowedOrigins.add(getRequestBaseUrl(req));
 
-  if (allowedOrigins.has(origin)) {
-    return true;
-  }
+  if (allowedOrigins.has(origin)) return true;
 
-  sendJson(res, 403, {
-    error: "forbidden",
-    message: "Origin is not allowed."
-  });
+  sendJson(res, 403, { error: "forbidden", message: "Origin is not allowed." });
   return false;
 }
 
@@ -457,39 +447,25 @@ function enforceRateLimit(req, res, bucket, maxRequests) {
   if (!current || current.resetAt <= now) {
     if (!current && rateLimitBuckets.size >= RATE_LIMIT_MAX_BUCKETS) {
       res.setHeader("Retry-After", "60");
-      sendJson(res, 429, {
-        error: "rate_limited",
-        message: "Traffic is too high. Please try again shortly."
-      });
+      sendJson(res, 429, { error: "rate_limited", message: "Traffic is too high. Please try again shortly." });
       return false;
     }
-
-    rateLimitBuckets.set(key, {
-      count: 1,
-      resetAt: now + RATE_LIMIT_WINDOW_MS
-    });
+    rateLimitBuckets.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
     return true;
   }
 
   current.count += 1;
-  if (current.count <= maxRequests) {
-    return true;
-  }
+  if (current.count <= maxRequests) return true;
 
   const retryAfterSeconds = Math.max(1, Math.ceil((current.resetAt - now) / 1000));
   res.setHeader("Retry-After", String(retryAfterSeconds));
-  sendJson(res, 429, {
-    error: "rate_limited",
-    message: "Too many requests. Please try again shortly."
-  });
+  sendJson(res, 429, { error: "rate_limited", message: "Too many requests. Please try again shortly." });
   return false;
 }
 
 function cleanupRateLimits(now) {
   for (const [key, value] of rateLimitBuckets.entries()) {
-    if (value.resetAt <= now) {
-      rateLimitBuckets.delete(key);
-    }
+    if (value.resetAt <= now) rateLimitBuckets.delete(key);
   }
   lastRateLimitSweep = now;
 }
@@ -501,9 +477,7 @@ function clientAddress(req) {
 
 function isRequestAuthenticated(req) {
   const bearer = readBearerToken(req);
-  if (bearer && isValidAccessToken(bearer)) {
-    return true;
-  }
+  if (bearer && isValidAccessToken(bearer)) return true;
 
   const cookie = parseCookies(req).sp_session;
   return Boolean(cookie && verifySessionCookie(cookie));
@@ -522,10 +496,7 @@ function isValidAccessToken(value) {
 
 function setSessionCookie(req, res) {
   const issuedAt = Date.now();
-  const payload = base64UrlEncode(JSON.stringify({
-    iat: issuedAt,
-    exp: issuedAt + SESSION_TTL_MS
-  }));
+  const payload = base64UrlEncode(JSON.stringify({ iat: issuedAt, exp: issuedAt + SESSION_TTL_MS }));
   const signature = signSessionPayload(payload);
   const cookie = [
     `sp_session=${payload}.${signature}`,
@@ -535,10 +506,7 @@ function setSessionCookie(req, res) {
     `Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`
   ];
 
-  if (isHttpsRequest(req)) {
-    cookie.push("Secure");
-  }
-
+  if (isHttpsRequest(req)) cookie.push("Secure");
   res.setHeader("Set-Cookie", cookie.join("; "));
 }
 
@@ -548,9 +516,7 @@ function clearSessionCookie(res) {
 
 function verifySessionCookie(value) {
   const [payload, signature] = String(value || "").split(".");
-  if (!payload || !signature || !timingSafeStringEqual(signature, signSessionPayload(payload))) {
-    return false;
-  }
+  if (!payload || !signature || !timingSafeStringEqual(signature, signSessionPayload(payload))) return false;
 
   try {
     const parsed = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
@@ -578,24 +544,27 @@ function base64UrlEncode(value) {
 }
 
 function parseCookies(req) {
-  return String(req.headers.cookie || "")
+  const pairs = String(req.headers.cookie || "")
     .split(";")
     .map(item => item.trim())
-    .filter(Boolean)
-    .reduce((cookies, item) => {
-      const separator = item.indexOf("=");
-      if (separator > 0) {
-        try {
-          cookies[item.slice(0, separator)] = decodeURIComponent(item.slice(separator + 1));
-        } catch (error) {
-          cookies[item.slice(0, separator)] = "";
-        }
+    .filter(Boolean);
+
+  return Object.fromEntries(
+    pairs.map(item => {
+      const sep = item.indexOf("=");
+      if (sep <= 0) return [item, ""];
+      try {
+        return [item.slice(0, sep), decodeURIComponent(item.slice(sep + 1))];
+      } catch (error) {
+        return [item.slice(0, sep), ""];
       }
-      return cookies;
-    }, {});
+    })
+  );
 }
 
-
+// ---------------------------------------------------------------------------
+// AI generation — assistant & briefing
+// ---------------------------------------------------------------------------
 
 async function generateAssistantResponse(payload, store = scenarioStore) {
   const snapshot = makeSnapshot(payload, store);
@@ -636,15 +605,11 @@ async function generateAssistantResponse(payload, store = scenarioStore) {
 async function generateOperationsBriefing(payload, store = scenarioStore) {
   const snapshot = makeSnapshot(payload, store);
   const cacheKey = briefingCacheKey(snapshot.scenarioId);
-  const cached = getCachedBriefing(cacheKey);
-  if (cached) {
-    return cloneJson(cached);
-  }
+  const cached = getBriefingCacheEntry(cacheKey, "value");
+  if (cached) return cloneJson(cached);
 
-  const pending = getPendingBriefing(cacheKey);
-  if (pending) {
-    return cloneJson(await pending);
-  }
+  const pending = getBriefingCacheEntry(cacheKey, "pending");
+  if (pending) return cloneJson(await pending);
 
   const pendingBriefing = createOperationsBriefing(snapshot);
   briefingCache.set(cacheKey, {
@@ -679,13 +644,15 @@ async function createOperationsBriefing(snapshot) {
     liveSnapshot: snapshot
   };
 
-  if (!hasConfiguredModel()) {
-    return generateDemoBriefing(snapshot);
-  }
+  if (!hasConfiguredModel()) return generateDemoBriefing(snapshot);
 
   const modelResult = await aiLimiter.run(() => callConfiguredModel(systemPrompt, userPrompt));
   return normalizeBriefingResult(modelResult, "configured-ai");
 }
+
+// ---------------------------------------------------------------------------
+// Briefing cache
+// ---------------------------------------------------------------------------
 
 function briefingCacheKey(scenarioId) {
   const config = getAiConfig();
@@ -693,42 +660,22 @@ function briefingCacheKey(scenarioId) {
   return `${source}:${scenarioId}`;
 }
 
-function getCachedBriefing(cacheKey) {
+/** Unified cache-entry reader — replaces the near-duplicate getCachedBriefing/getPendingBriefing pair. */
+function getBriefingCacheEntry(cacheKey, field) {
   const entry = briefingCache.get(cacheKey);
-  if (!entry) {
-    return null;
-  }
-
+  if (!entry) return null;
   if (entry.expiresAt <= Date.now()) {
     briefingCache.delete(cacheKey);
     return null;
   }
-
-  return entry.value || null;
-}
-
-function getPendingBriefing(cacheKey) {
-  const entry = briefingCache.get(cacheKey);
-  if (!entry) {
-    return null;
-  }
-
-  if (entry.expiresAt <= Date.now()) {
-    briefingCache.delete(cacheKey);
-    return null;
-  }
-
-  return entry.pending || null;
+  return entry[field] || null;
 }
 
 function trimBriefingCache() {
   const now = Date.now();
   for (const [key, entry] of briefingCache.entries()) {
-    if (entry.expiresAt <= now) {
-      briefingCache.delete(key);
-    }
+    if (entry.expiresAt <= now) briefingCache.delete(key);
   }
-
   while (briefingCache.size > BRIEFING_CACHE_MAX_ENTRIES) {
     const oldestKey = briefingCache.keys().next().value;
     briefingCache.delete(oldestKey);
@@ -738,37 +685,25 @@ function trimBriefingCache() {
 function clearBriefingCacheForScenario(scenarioId) {
   const suffix = `:${scenarioId}`;
   for (const key of briefingCache.keys()) {
-    if (key.endsWith(suffix)) {
-      briefingCache.delete(key);
-    }
+    if (key.endsWith(suffix)) briefingCache.delete(key);
   }
 }
 
-function cloneJson(value) {
-  return JSON.parse(JSON.stringify(value));
-}
+// ---------------------------------------------------------------------------
+// AI provider integration
+// ---------------------------------------------------------------------------
 
 async function callConfiguredModel(systemPrompt, userPayload) {
   const config = getAiConfig();
-  if (!config.apiKey || !config.model) {
-    return null;
-  }
+  if (!config.apiKey || !config.model) return null;
 
   const requestBody = {
     model: config.model,
     temperature: 0.25,
-    response_format: {
-      type: "json_object"
-    },
+    response_format: { type: "json_object" },
     messages: [
-      {
-        role: "system",
-        content: systemPrompt
-      },
-      {
-        role: "user",
-        content: JSON.stringify(userPayload)
-      }
+      { role: "system", content: systemPrompt },
+      { role: "user", content: JSON.stringify(userPayload) }
     ]
   };
 
@@ -788,10 +723,7 @@ async function callConfiguredModel(systemPrompt, userPayload) {
     const fallbackBody = {
       ...requestBody,
       messages: [
-        {
-          role: "system",
-          content: `${systemPrompt} Return only a valid JSON object with no markdown.`
-        },
+        { role: "system", content: `${systemPrompt} Return only a valid JSON object with no markdown.` },
         requestBody.messages[1]
       ]
     };
@@ -809,18 +741,17 @@ async function callConfiguredModel(systemPrompt, userPayload) {
   }
 
   const data = await response.json();
-  const content = data && data.choices && data.choices[0] && data.choices[0].message
-    ? data.choices[0].message.content
-    : "";
-
+  const content = data?.choices?.[0]?.message?.content || "";
   const parsed = parseJsonObject(content);
-  if (!parsed) {
-    throw makeProviderError(502, "Provider returned a non-JSON response.");
-  }
-
+  if (!parsed) throw makeProviderError(502, "Provider returned a non-JSON response.");
   return parsed;
 }
 
+/**
+ * Sends the chat-completion request with an AbortController-based timeout.
+ * The controller is cleaned up in .finally(); the AbortController itself is
+ * collected by GC after the promise settles.
+ */
 function sendChatCompletionRequest(config, body) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
@@ -845,7 +776,6 @@ function makeProviderError(status, details) {
     status,
     details: sanitizeLogMessage(details)
   }));
-
   return new HttpError(502, "AI provider request failed", true);
 }
 
@@ -862,12 +792,8 @@ function shouldRetryWithoutJsonMode(status, details) {
     && (text.includes("unsupported") || text.includes("not supported") || text.includes("json"));
 }
 
-
 function parseJsonObject(content) {
-  if (!content || typeof content !== "string") {
-    return null;
-  }
-
+  if (!content || typeof content !== "string") return null;
   try {
     return JSON.parse(content);
   } catch (error) {
@@ -881,16 +807,17 @@ function parseJsonObject(content) {
       }
     }
   }
-
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Snapshot & sanitization
+// ---------------------------------------------------------------------------
 
 function makeSnapshot(payload, store = scenarioStore) {
   const scenarioId = sanitizeScenarioId(payload.scenarioId || payload.scenario || "arrival");
   const snapshot = store.getScenario(scenarioId);
-  if (!snapshot) {
-    throw new HttpError(400, "Unknown scenario", true);
-  }
+  if (!snapshot) throw new HttpError(400, "Unknown scenario", true);
 
   return {
     scenarioId,
@@ -898,16 +825,13 @@ function makeSnapshot(payload, store = scenarioStore) {
     matchClock: snapshot.matchClock,
     weather: snapshot.weather,
     transit: snapshot.transit,
-    sustainability: {
-      ...snapshot.sustainability
-    },
+    sustainability: { ...snapshot.sustainability },
+    // Defensive shallow copies to prevent mutation of stored data
     zones: snapshot.zones.map(zone => ({ ...zone })),
     incidents: snapshot.incidents.map(incident => ({ ...incident })),
     generatedAt: new Date().toISOString()
   };
 }
-
-
 
 function sanitizeScenarioId(value) {
   return sanitizeText(value, 32).toLowerCase().replace(/[^a-z0-9_-]/g, "");
@@ -916,15 +840,6 @@ function sanitizeScenarioId(value) {
 function selectedZoneFromPayload(payload, snapshot) {
   const requestedId = sanitizeText(payload.selectedZoneId || (payload.selectedZone && payload.selectedZone.id), 64);
   return snapshot.zones.find(zone => zone.id === requestedId) || mostCrowdedZone(snapshot.zones);
-}
-
-function sanitizeText(value, maxLength) {
-  return String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, maxLength);
-}
-
-function sanitizeChoice(value, allowed, fallback) {
-  const text = sanitizeText(value, 80);
-  return allowed.includes(text) ? text : fallback;
 }
 
 function sanitizeAccessibility(value) {
@@ -936,25 +851,25 @@ function sanitizeAccessibility(value) {
   };
 }
 
+// ---------------------------------------------------------------------------
+// Demo AI fallbacks
+// ---------------------------------------------------------------------------
+
 function generateDemoAssistant(payload, snapshot) {
   const persona = String(payload.persona || "Fan");
   const question = String(payload.question || "What should I do next?");
   const language = String(payload.language || "English");
-  const selectedZone = payload.selectedZone || mostCrowdedZone(snapshot.zones);
-  const zone = snapshot.zones.find(item => item.id === selectedZone.id) || selectedZone || mostCrowdedZone(snapshot.zones);
+  const zone = snapshot.zones.find(item => item.id === (payload.selectedZone && payload.selectedZone.id)) || mostCrowdedZone(snapshot.zones);
   const crowded = mostCrowdedZone(snapshot.zones);
   const calm = leastCrowdedZone(snapshot.zones);
   const riskLevel = riskFromDensity(crowded.density);
   const accessibility = payload.accessibility || {};
-  const needsStepFree = Boolean(accessibility.stepFree);
-  const needsLowSensory = Boolean(accessibility.lowSensory);
-  const needsAudio = Boolean(accessibility.audioDescription);
 
   const actions = [];
-  if (needsStepFree) {
+  if (accessibility.stepFree) {
     actions.push(`Use the step-free path via ${zone.accessible || calm.accessible || "the accessibility hub"}.`);
   }
-  if (needsLowSensory) {
+  if (accessibility.lowSensory) {
     actions.push(`Avoid ${crowded.name}; route through ${calm.name} where crowd density is ${calm.density}%.`);
   }
   if (persona.toLowerCase().includes("volunteer")) {
@@ -964,7 +879,7 @@ function generateDemoAssistant(payload, snapshot) {
   } else {
     actions.push(`Head toward ${calm.name}; current wait is about ${calm.wait} minutes.`);
   }
-  if (needsAudio) {
+  if (accessibility.audioDescription) {
     actions.push("Enable audio-description announcements and repeat gate changes in short plain-language phrases.");
   }
   actions.push("Prefer public transit or shared shuttle after the match to reduce curbside congestion.");
@@ -991,9 +906,7 @@ function generateDemoBriefing(snapshot) {
   const calm = leastCrowdedZone(snapshot.zones);
   const incident = highestSeverityIncident(snapshot.incidents);
   const riskLevel = riskFromDensity(crowded.density);
-  const diversion = snapshot.sustainability && snapshot.sustainability.diversion
-    ? snapshot.sustainability.diversion
-    : "not reported";
+  const diversion = snapshot.sustainability?.diversion || "not reported";
 
   return normalizeBriefingResult({
     headline: `${snapshot.scenario}: ${riskLevel.toUpperCase()} crowd posture`,
@@ -1020,15 +933,19 @@ function generateDemoBriefing(snapshot) {
   }, "demo-ai");
 }
 
+// ---------------------------------------------------------------------------
+// Result normalization
+// ---------------------------------------------------------------------------
+
 function normalizeAssistantResult(result, source) {
   return {
     source,
-    headline: String(result && result.headline ? result.headline : "AI matchday guidance"),
-    response: String(result && result.response ? result.response : "No response generated."),
-    actions: toArray(result && result.actions),
-    riskLevel: normalizeRisk(result && result.riskLevel),
-    escalation: String(result && result.escalation ? result.escalation : "No escalation recommended."),
-    confidence: String(result && result.confidence ? result.confidence : source === "configured-ai" ? "model-generated" : "demo"),
+    headline: String(result?.headline || "AI matchday guidance"),
+    response: String(result?.response || "No response generated."),
+    actions: toArray(result?.actions),
+    riskLevel: normalizeRisk(result?.riskLevel),
+    escalation: String(result?.escalation || "No escalation recommended."),
+    confidence: String(result?.confidence || (source === "configured-ai" ? "model-generated" : "demo")),
     generatedAt: new Date().toISOString()
   };
 }
@@ -1036,78 +953,56 @@ function normalizeAssistantResult(result, source) {
 function normalizeBriefingResult(result, source) {
   return {
     source,
-    headline: String(result && result.headline ? result.headline : "Live operations briefing"),
-    riskLevel: normalizeRisk(result && result.riskLevel),
-    summary: String(result && result.summary ? result.summary : "No summary generated."),
-    priorities: toArray(result && result.priorities),
-    staffActions: toArray(result && result.staffActions),
-    fanComms: String(result && result.fanComms ? result.fanComms : "No fan communications drafted."),
-    sustainabilityNudge: String(result && result.sustainabilityNudge ? result.sustainabilityNudge : "No sustainability nudge drafted."),
-    escalation: String(result && result.escalation ? result.escalation : "No escalation recommended."),
+    headline: String(result?.headline || "Live operations briefing"),
+    riskLevel: normalizeRisk(result?.riskLevel),
+    summary: String(result?.summary || "No summary generated."),
+    priorities: toArray(result?.priorities),
+    staffActions: toArray(result?.staffActions),
+    fanComms: String(result?.fanComms || "No fan communications drafted."),
+    sustainabilityNudge: String(result?.sustainabilityNudge || "No sustainability nudge drafted."),
+    escalation: String(result?.escalation || "No escalation recommended."),
     generatedAt: new Date().toISOString()
   };
 }
 
 function toArray(value) {
-  if (Array.isArray(value)) {
-    return value.map(item => String(item)).filter(Boolean);
-  }
-  if (typeof value === "string" && value.trim()) {
-    return [value.trim()];
-  }
+  if (Array.isArray(value)) return value.map(item => String(item)).filter(Boolean);
+  if (typeof value === "string" && value.trim()) return [value.trim()];
   return [];
 }
 
+// O(n) helpers — replaced the O(n log n) sort-based originals
 function mostCrowdedZone(zones) {
-  return [...zones].sort((a, b) => b.density - a.density)[0] || {
-    id: "unknown",
-    name: "Unknown zone",
-    density: 0,
-    wait: 0,
-    accessible: "Ask nearest volunteer"
-  };
+  return zones.reduce((a, b) => b.density > a.density ? b : a, UNKNOWN_ZONE);
 }
 
 function leastCrowdedZone(zones) {
-  return [...zones].sort((a, b) => a.density - b.density)[0] || {
-    id: "unknown",
-    name: "Unknown zone",
-    density: 0,
-    wait: 0,
-    accessible: "Ask nearest volunteer"
-  };
+  return zones.reduce((a, b) => b.density < a.density ? b : a, { ...UNKNOWN_ZONE, density: Infinity });
 }
 
 function highestSeverityIncident(incidents) {
-  const rank = {
-    critical: 4,
-    high: 3,
-    medium: 2,
-    low: 1
-  };
-  return [...incidents].sort((a, b) => (rank[b.severity] || 0) - (rank[a.severity] || 0))[0] || null;
+  const rank = { critical: 4, high: 3, medium: 2, low: 1 };
+  return incidents.reduce((best, item) => {
+    return (rank[item.severity] || 0) > (rank[best?.severity] || 0) ? item : best;
+  }, null);
 }
 
+// NOTE: keep in sync with densityClass in public/app.js
 function riskFromDensity(density) {
-  if (density >= 92) {
-    return "critical";
-  }
-  if (density >= 82) {
-    return "high";
-  }
-  if (density >= 65) {
-    return "medium";
-  }
+  if (density >= 92) return "critical";
+  if (density >= 82) return "high";
+  if (density >= 65) return "medium";
   return "low";
 }
 
 function normalizeRisk(risk) {
   const value = String(risk || "").toLowerCase();
-  if (["critical", "high", "medium", "low"].includes(value)) {
-    return value;
-  }
-  return "medium";
+  return ["critical", "high", "medium", "low"].includes(value) ? value : "medium";
 }
+
+// ---------------------------------------------------------------------------
+// Startup
+// ---------------------------------------------------------------------------
 
 if (require.main === module) {
   const server = createAppServer();

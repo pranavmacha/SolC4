@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: stadiumpulse-26
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: APP_ACCESS_TOKEN
+        generateValue: true
+      - key: GROQ_API_KEY
+        sync: false # Requires manual user input during deployment
+      - key: GROQ_MODEL
+        value: openai/gpt-oss-20b
+      - key: GROQ_BASE_URL
+        value: https://api.groq.com/openai/v1
+      - key: DISABLE_AUTH
+        value: "true"

@@ -67,23 +67,33 @@
             <span class="pill">Operator-created</span>
           </div>
           <form id="scenarioForm" class="scenario-form">
-            <label for="customLabel">Name</label>
-            <input id="customLabel" type="text" maxlength="80" placeholder="North gate surge">
+            <label for="customLabel">Scenario name</label>
+            <input id="customLabel" type="text" maxlength="80" placeholder="e.g. North gate surge">
 
             <label for="customClock">Match clock</label>
-            <input id="customClock" type="text" maxlength="40" placeholder="T-00:45">
+            <input id="customClock" type="text" maxlength="40" placeholder="e.g. T-00:45">
 
-            <label for="customWeather">Weather</label>
-            <textarea id="customWeather" rows="2" placeholder="Hot, humid, lightning watch in 25 minutes"></textarea>
+            <label for="customWeather">Weather conditions</label>
+            <input id="customWeather" type="text" maxlength="180" placeholder="e.g. Hot, humid, lightning watch in 25 min">
 
-            <label for="customTransit">Transit</label>
-            <textarea id="customTransit" rows="2" placeholder="Metro at 82% load, shuttle bays 5 open"></textarea>
+            <label for="customTransit">Transit signal</label>
+            <input id="customTransit" type="text" maxlength="180" placeholder="e.g. Metro at 82% load, shuttle bays 5 open">
 
-            <label for="customZones">Zones JSON</label>
-            <textarea id="customZones" rows="8"></textarea>
+            <fieldset class="builder-fieldset">
+              <legend>
+                <span>Zones</span>
+                <button type="button" id="addZoneBtn" class="builder-add-btn" aria-label="Add zone">+ Add zone</button>
+              </legend>
+              <div id="zoneBuilder" class="builder-list"></div>
+            </fieldset>
 
-            <label for="customIncidents">Incidents JSON</label>
-            <textarea id="customIncidents" rows="5"></textarea>
+            <fieldset class="builder-fieldset">
+              <legend>
+                <span>Incidents</span>
+                <button type="button" id="addIncidentBtn" class="builder-add-btn" aria-label="Add incident">+ Add incident</button>
+              </legend>
+              <div id="incidentBuilder" class="builder-list"></div>
+            </fieldset>
 
             <button type="submit">Create Scenario</button>
             <p id="scenarioMessage" class="form-message" role="status"></p>
