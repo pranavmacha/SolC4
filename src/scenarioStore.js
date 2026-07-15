@@ -1,11 +1,24 @@
 const fs = require("node:fs");
 const path = require("node:path");
+const { sanitizeText, sanitizeChoice, cloneJson } = require("./sanitize");
 
 const BASE_SCENARIO_FILE = path.join(__dirname, "..", "data", "scenarios.json");
 const DEFAULT_CUSTOM_SCENARIO_FILE = path.join(__dirname, "..", "data", "custom-scenarios.json");
 const MAX_SCENARIOS = 100;
 const MAX_ZONES = 24;
 const MAX_INCIDENTS = 32;
+
+/** Default map positions for zones, hoisted to module scope to avoid re-creation per call. */
+const DEFAULT_ZONE_POSITIONS = [
+  { x: 42, y: 6 },
+  { x: 9, y: 38 },
+  { x: 42, y: 82 },
+  { x: 75, y: 38 },
+  { x: 31, y: 26 },
+  { x: 59, y: 26 },
+  { x: 39, y: 53 },
+  { x: 62, y: 68 }
+];
 
 function createScenarioStore(options = {}) {
   const baseFile = options.baseFile || BASE_SCENARIO_FILE;
@@ -15,24 +28,15 @@ function createScenarioStore(options = {}) {
   return {
     listScenarios: () => {
       const customScenarios = loadCustomScenarios(customFile);
-      return cloneScenarioMap({
-        ...baseScenarios,
-        ...customScenarios
-      });
+      return cloneJson({ ...baseScenarios, ...customScenarios });
     },
     getScenario: scenarioId => {
-      const scenarios = {
-        ...baseScenarios,
-        ...loadCustomScenarios(customFile)
-      };
+      const scenarios = { ...baseScenarios, ...loadCustomScenarios(customFile) };
       return cloneJson(scenarios[sanitizeId(scenarioId)]);
     },
     createScenario: async input => {
       const customScenarios = loadCustomScenarios(customFile);
-      const allScenarios = {
-        ...baseScenarios,
-        ...customScenarios
-      };
+      const allScenarios = { ...baseScenarios, ...customScenarios };
       if (Object.keys(allScenarios).length >= MAX_SCENARIOS) {
         throw validationError("Scenario limit reached.");
       }
@@ -45,17 +49,18 @@ function createScenarioStore(options = {}) {
   };
 }
 
-function loadScenarioMap(filePath) {
-  const raw = JSON.parse(fs.readFileSync(filePath, "utf8"));
+/** Shared parser for both base and custom scenario files. */
+function parseScenarioEntries(raw) {
   return Object.fromEntries(
     Object.entries(raw).map(([id, scenario]) => {
-      const normalized = normalizeScenario({
-        ...scenario,
-        id
-      }, {});
+      const normalized = normalizeScenario({ ...scenario, id }, {});
       return [normalized.id, normalized];
     })
   );
+}
+
+function loadScenarioMap(filePath) {
+  return parseScenarioEntries(JSON.parse(fs.readFileSync(filePath, "utf8")));
 }
 
 function loadCustomScenarios(filePath) {
@@ -68,16 +73,7 @@ function loadCustomScenarios(filePath) {
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       return {};
     }
-
-    return Object.fromEntries(
-      Object.entries(raw).map(([id, scenario]) => {
-        const normalized = normalizeScenario({
-          ...scenario,
-          id
-        }, {});
-        return [normalized.id, normalized];
-      })
-    );
+    return parseScenarioEntries(raw);
   } catch (error) {
     console.error(JSON.stringify({
       level: "warn",
@@ -89,13 +85,9 @@ function loadCustomScenarios(filePath) {
 }
 
 async function persistCustomScenarios(filePath, scenarios) {
-  await fs.promises.mkdir(path.dirname(filePath), {
-    recursive: true
-  });
+  await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-  await fs.promises.writeFile(tempPath, `${JSON.stringify(scenarios, null, 2)}\n`, {
-    mode: 0o600
-  });
+  await fs.promises.writeFile(tempPath, `${JSON.stringify(scenarios, null, 2)}\n`, { mode: 0o600 });
   await fs.promises.rename(tempPath, filePath);
 }
 
@@ -135,13 +127,13 @@ function normalizeZones(value) {
     id: sanitizeId(zone.id || zone.name || `zone-${index + 1}`) || `zone-${index + 1}`,
     name: sanitizeText(zone.name || `Zone ${index + 1}`, 80),
     type: sanitizeText(zone.type || "Zone", 40),
-    x: clampNumber(zone.x, 0, 94, defaultZonePosition(index).x),
-    y: clampNumber(zone.y, 0, 94, defaultZonePosition(index).y),
+    x: clampNumber(zone.x, 0, 94, DEFAULT_ZONE_POSITIONS[index % DEFAULT_ZONE_POSITIONS.length].x),
+    y: clampNumber(zone.y, 0, 94, DEFAULT_ZONE_POSITIONS[index % DEFAULT_ZONE_POSITIONS.length].y),
     w: clampNumber(zone.w, 8, 32, 18),
     h: clampNumber(zone.h, 8, 24, 12),
     density: clampNumber(zone.density, 0, 100, 0),
     wait: clampNumber(zone.wait, 0, 180, 0),
-    status: sanitizeChoice(zone.status, ["stable", "rising", "falling"], "stable"),
+    status: sanitizeChoiceLower(zone.status, ["stable", "rising", "falling"], "stable"),
     accessible: sanitizeText(zone.accessible || "Ask nearest volunteer", 120)
   })).filter(zone => zone.name);
 }
@@ -152,7 +144,7 @@ function normalizeIncidents(value) {
     id: sanitizeText(incident.id || `INC-CUSTOM-${index + 1}`, 40),
     title: sanitizeText(incident.title || "Operational note", 120),
     zone: sanitizeText(incident.zone || "Unassigned", 80),
-    severity: sanitizeChoice(incident.severity, ["low", "medium", "high", "critical"], "medium"),
+    severity: sanitizeChoiceLower(incident.severity, ["low", "medium", "high", "critical"], "medium"),
     owner: sanitizeText(incident.owner || "Operations", 80),
     eta: sanitizeText(incident.eta || "TBD", 40)
   })).filter(incident => incident.title);
@@ -176,54 +168,31 @@ function normalizeSustainability(value) {
   };
 }
 
-function defaultZonePosition(index) {
-  const positions = [
-    { x: 42, y: 6 },
-    { x: 9, y: 38 },
-    { x: 42, y: 82 },
-    { x: 75, y: 38 },
-    { x: 31, y: 26 },
-    { x: 59, y: 26 },
-    { x: 39, y: 53 },
-    { x: 62, y: 68 }
-  ];
-  return positions[index % positions.length];
-}
-
 function clampNumber(value, min, max, fallback) {
   const number = Number(value);
-  if (!Number.isFinite(number)) {
-    return fallback;
-  }
-  return Math.min(max, Math.max(min, number));
-}
-
-function sanitizeText(value, maxLength) {
-  return String(value || "").replace(/[\u0000-\u001f\u007f]/g, " ").trim().slice(0, maxLength);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
 }
 
 function sanitizeId(value) {
   return sanitizeText(value, 80).toLowerCase().replace(/[^a-z0-9_-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function sanitizeChoice(value, allowed, fallback) {
+/**
+ * Like sanitizeChoice but lowercases the input before matching.
+ * Used for scenario-store fields (status, severity) where case normalization is needed.
+ * Distinct from the shared sanitizeChoice which preserves case (used by server.js for persona/language).
+ */
+function sanitizeChoiceLower(value, allowed, fallback) {
   const text = sanitizeText(value, 40).toLowerCase();
   return allowed.includes(text) ? text : fallback;
 }
 
+/** Parallel to HttpError in server.js — kept separate to avoid circular deps. */
 function validationError(message) {
   const error = new Error(message);
   error.statusCode = 400;
   error.expose = true;
   return error;
-}
-
-function cloneScenarioMap(scenarios) {
-  return cloneJson(scenarios);
-}
-
-function cloneJson(value) {
-  return value == null ? value : JSON.parse(JSON.stringify(value));
 }
 
 module.exports = {
