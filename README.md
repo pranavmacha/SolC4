@@ -80,12 +80,52 @@ npm test
 
 ## Architecture
 
-- `server.js`: static server plus `/api/ai/assistant` and `/api/ai/briefing`.
-- `src/config.js`: environment and provider configuration.
+The codebase is organized into focused modules under `src/`:
+
+- `server.js`: lightweight entry point — loads config, boots the HTTP server.
+- `src/app.js`: application factory — assembles routing, auth, rate limiting, and static serving.
+- `src/config.js`: environment loading and runtime/provider configuration.
+- `src/errors.js`: centralized `HttpError` class and safe error-response formatting.
+- `src/sanitize.js`: shared text-sanitization, choice-validation, and JSON cloning utilities.
 - `src/scenarioStore.js`: built-in/custom scenario loading, validation, and persistence.
-- `src/asyncLimiter.js`: bounded async work queue for AI backpressure.
-- `data/scenarios.json`: built-in scenario templates used by both the server and UI.
-- `public/index.html`: first-screen operational dashboard.
-- `public/app.js`: UI state, custom scenario creation, and API calls.
+- `src/asyncLimiter.js`: bounded async work queue for AI concurrency control.
+
+### HTTP Layer (`src/http/`)
+- `json.js`: JSON request body parsing and response helpers.
+- `request.js`: request URL construction and reverse-proxy base-URL detection.
+- `staticFiles.js`: secure static file server with path-traversal protection.
+
+### Routes (`src/routes/`)
+- `api.js`: central API router with auth and rate-limit guards.
+- `aiRoutes.js`: AI assistant and operations briefing endpoints.
+- `healthRoutes.js`: service health-check endpoint.
+- `scenarioRoutes.js`: scenario listing and creation endpoints.
+- `sessionRoutes.js`: session login, status, and logout endpoints.
+
+### Security (`src/security/`)
+- `auth.js`: token validation, HMAC-signed session cookies, origin enforcement.
+- `headers.js`: CSP, HSTS, and framing/CORS response headers.
+- `rateLimit.js`: in-memory per-IP rate limiter.
+
+### Services (`src/services/`)
+- `aiService.js`: AI service facade — orchestrates provider, limiter, cache, and demo fallback.
+- `aiProvider.js`: OpenAI-compatible chat-completions client with timeout and retry.
+- `briefingCache.js`: TTL-bounded in-memory cache with pending-promise deduplication.
+- `demoAi.js`: demo AI response generators for offline/credentialless operation.
+- `snapshot.js`: scenario-to-snapshot conversion and zone/incident query helpers.
+
+### Data and Frontend
+- `data/scenarios.json`: built-in scenario templates.
+- `public/index.html`: operational dashboard markup.
+- `public/app.js`: browser bootstrap that starts the dashboard after feature modules load.
+- `public/js/state.js`: shared browser state and constants.
+- `public/js/dom.js`: DOM element cache.
+- `public/js/api.js`: same-origin JSON API client and auth-lock response handling.
+- `public/js/access.js`: access gate, session verification, and protected-control state.
+- `public/js/scenarios.js`: trusted scenario loading and current-zone selection.
+- `public/js/scenarioBuilder.js`: custom scenario form builder and submission flow.
+- `public/js/render.js`: metrics, map, incidents, and selected-zone rendering.
+- `public/js/aiPanel.js`: operations briefing, copilot requests, and chat rendering.
+- `public/js/events.js`: browser event binding.
 - `public/styles.css`: responsive dashboard styling.
-- `tests/server.test.js`: smoke tests for health, AI fallback, and risk mapping.
+- `tests/server.test.js`: integration tests for API, auth, caching, AI fallback, and static UI wiring.

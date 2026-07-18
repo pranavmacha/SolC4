@@ -4,7 +4,8 @@ const http = require("node:http");
 const os = require("node:os");
 const path = require("node:path");
 const test = require("node:test");
-const { createAppServer, getAiConfig, riskFromDensity } = require("../server");
+const { createAppServer, getAiConfig } = require("../server");
+const { riskFromDensity } = require("../src/services/demoAi");
 
 const DEFAULT_PUBLIC_DIR = path.join(__dirname, "..", "public");
 
@@ -125,6 +126,42 @@ test("health endpoint reports service status", async () => {
     assert.equal(body.ok, true);
     assert.equal(response.headers.get("x-content-type-options"), "nosniff");
     assert.match(response.headers.get("content-security-policy"), /default-src 'self'/);
+  } finally {
+    await server.close();
+  }
+});
+
+test("dashboard loads the modular browser scripts in order", async () => {
+  const server = await startTestServer();
+  try {
+    const response = await fetch(`${server.url}/`);
+    const html = await response.text();
+    const scriptSources = Array.from(html.matchAll(/<script src="([^"]+)"><\/script>/g), match => match[1]);
+
+    assert.deepEqual(scriptSources, [
+      "/js/state.js",
+      "/js/utils.js",
+      "/js/dom.js",
+      "/js/api.js",
+      "/js/access.js",
+      "/js/scenarios.js",
+      "/js/scenarioBuilder.js",
+      "/js/render.js",
+      "/js/aiPanel.js",
+      "/js/events.js",
+      "/app.js"
+    ]);
+
+    const scriptResponses = await Promise.all(
+      scriptSources.map(async source => ({
+        source,
+        response: await fetch(`${server.url}${source}`)
+      }))
+    );
+    scriptResponses.forEach(({ source, response }) => {
+      assert.equal(response.status, 200, source);
+      assert.match(response.headers.get("content-type"), /javascript/, source);
+    });
   } finally {
     await server.close();
   }

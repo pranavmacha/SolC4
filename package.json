@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check public/app.js && node --check tests/server.test.js",
+    "check": "find server.js src public tests -name '*.js' -print0 | xargs -0 -n 1 node --check",
     "test": "node --test"
   },
   "keywords": [
